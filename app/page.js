@@ -1,4 +1,5 @@
 "use client";
+
 import { useEffect, useMemo, useState } from "react";
 import {
   Chart as ChartJS,
@@ -19,8 +20,7 @@ import {
   OhlcElement,
 } from "chartjs-chart-financial";
 import "chartjs-adapter-date-fns";
-const API_BASE_URL =
-  process.env.NEXT_PUBLIC_API_URL;
+
 ChartJS.register(
   LinearScale,
   CategoryScale,
@@ -36,6 +36,9 @@ ChartJS.register(
   OhlcElement
 );
 
+const API_BASE_URL =
+  process.env.NEXT_PUBLIC_API_URL || "https://stock-report-app.onrender.com";
+
 export default function Home() {
   const [stock, setStock] = useState("");
   const [data, setData] = useState(null);
@@ -44,6 +47,7 @@ export default function Home() {
   const [portfolio, setPortfolio] = useState([]);
   const [loading, setLoading] = useState(false);
   const [showDisclaimer, setShowDisclaimer] = useState(false);
+  const [error, setError] = useState("");
 
   useEffect(() => {
     try {
@@ -63,8 +67,8 @@ export default function Home() {
       if (savedBuyPrice) setBuyPrice(savedBuyPrice);
       if (savedQuantity) setQuantity(savedQuantity);
       if (savedPortfolio) setPortfolio(JSON.parse(savedPortfolio));
-    } catch (error) {
-      console.log("LocalStorage load error:", error);
+    } catch (err) {
+      console.log("LocalStorage load error:", err);
     }
   }, []);
 
@@ -100,11 +104,20 @@ export default function Home() {
 
     try {
       setLoading(true);
-      const res = await fetch(`${API_BASE_URL}/stock/${stock}`);
+      setError("");
+
+      const res = await fetch(`${API_BASE_URL}/stock/${stock.trim()}`);
       const result = await res.json();
+
+      if (!res.ok || result.error) {
+        setError(result.error || "Stock fetch failed");
+        return;
+      }
+
       setData(result);
-    } catch (error) {
-      console.log("Error fetching data:", error);
+    } catch (err) {
+      console.log("Error fetching data:", err);
+      setError("Unable to fetch stock data. Please try again.");
     } finally {
       setLoading(false);
     }
@@ -143,6 +156,7 @@ export default function Home() {
     setBuyPrice("");
     setQuantity("");
     setPortfolio([]);
+    setError("");
   };
 
   const totalInvested = portfolio.reduce(
@@ -792,6 +806,10 @@ export default function Home() {
                 </button>
               </div>
             </div>
+
+            {error && (
+              <p style={{ color: "#f87171", marginTop: "12px" }}>{error}</p>
+            )}
           </div>
 
           <style>{`

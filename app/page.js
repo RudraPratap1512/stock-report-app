@@ -1,4 +1,6 @@
 "use client";
+const API_BASE_URL =
+  process.env.NEXT_PUBLIC_API_URL || "http://localhost:5001";
 import { useEffect, useMemo, useState } from "react";
 import {
   Chart as ChartJS,

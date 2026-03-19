@@ -100,7 +100,7 @@ export default function Home() {
 
     try {
       setLoading(true);
-      const res = await fetch(`http://127.0.0.1:5001/stock/${stock}`);
+      const res = await fetch(`${API_BASE_URL}/stock/${stock}`);
       const result = await res.json();
       setData(result);
     } catch (error) {

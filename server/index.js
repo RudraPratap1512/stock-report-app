@@ -5,9 +5,21 @@ const YahooFinance = require("yahoo-finance2").default;
 const { GoogleGenAI } = require("@google/genai");
 
 const app = express();
-const PORT = 5001;
+const PORT = process.env.PORT || 5001;
 
-app.use(cors());
+app.use(
+  cors({
+    origin: [
+      "http://localhost:3000",
+      "https://stock-report-app-six.vercel.app",
+      "https://stock-report-app.vercel.app",
+    ],
+    methods: ["GET", "POST", "OPTIONS"],
+    credentials: true,
+  })
+);
+
+app.use(express.json());
 
 const yahooFinance = new YahooFinance();
 
@@ -30,7 +42,6 @@ function calculateScore(history) {
 
   const closes = history.map((item) => Number(item.close));
 
-  // EMA 5
   const emaPeriod = 5;
   const multiplier = 2 / (emaPeriod + 1);
   let ema = closes[0];
@@ -42,7 +53,6 @@ function calculateScore(history) {
   const latestClose = closes[closes.length - 1];
   const prevClose = closes[closes.length - 2];
 
-  // RSI 14
   const rsiPeriod = 14;
   let gains = 0;
   let losses = 0;
@@ -165,14 +175,14 @@ app.get("/stock/:symbol", async (req, res) => {
     const firstMatch = searchResult.quotes?.[0];
 
     if (!firstMatch || !firstMatch.symbol) {
-      return res.json({ error: "Stock not found" });
+      return res.status(404).json({ error: "Stock not found" });
     }
 
     const symbol = firstMatch.symbol;
     const quote = await yahooFinance.quote(symbol);
 
     if (!quote || !quote.regularMarketPrice) {
-      return res.json({ error: "Stock not found" });
+      return res.status(404).json({ error: "Stock not found" });
     }
 
     const price = quote.regularMarketPrice;
@@ -283,7 +293,7 @@ Keep it concise, practical, and numeric where possible.
 `;
 
       const response = await ai.models.generateContent({
-        model: "gemini-flash-latest",
+        model: "gemini-2.0-flash",
         contents: prompt,
       });
 
@@ -312,7 +322,7 @@ Keep it concise, practical, and numeric where possible.
     });
   } catch (error) {
     console.log("Server error:", error.message);
-    res.json({ error: "Stock not found" });
+    res.status(500).json({ error: "Stock not found" });
   }
 });
 

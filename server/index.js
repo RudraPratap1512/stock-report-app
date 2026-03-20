@@ -2,6 +2,7 @@ require("dotenv").config();
 const express = require("express");
 const cors = require("cors");
 const axios = require("axios");
+const { GoogleGenAI } = require("@google/genai");
 
 const app = express();
 const PORT = process.env.PORT || 5001;
@@ -9,14 +10,14 @@ const PORT = process.env.PORT || 5001;
 app.use(cors());
 app.use(express.json());
 
+const ai = new GoogleGenAI({
+  apiKey: process.env.GEMINI_API_KEY,
+});
+
 async function getStockData(symbol) {
   const raw = String(symbol || "").trim().toUpperCase();
 
-  const candidates = [
-    raw,
-    `${raw}.NS`,
-    `${raw}.BO`,
-  ];
+  const candidates = [raw, `${raw}.NS`, `${raw}.BO`];
 
   for (const finalSymbol of candidates) {
     const url = `https://query2.finance.yahoo.com/v8/finance/chart/${finalSymbol}?interval=1d`;
@@ -52,6 +53,65 @@ async function getStockData(symbol) {
   return null;
 }
 
+function fallbackAI(data) {
+  return {
+    signal: "HOLD",
+    entry: `${data.price}`,
+    target: (Number(data.price) * 1.03).toFixed(2),
+    stopLoss: (Number(data.price) * 0.98).toFixed(2),
+    risk: "Medium",
+    reason: "AI service unavailable, using fallback logic based on current live price.",
+    action: "Wait for confirmation before taking a fresh position.",
+  };
+}
+
+async function generateAIAnalysis(stockData) {
+  try {
+    const prompt = `
+You are a practical stock analysis assistant for educational use only.
+
+Analyze this stock data and return only valid JSON.
+
+Stock Name: ${stockData.name}
+Symbol: ${stockData.symbol}
+Exchange: ${stockData.exchange}
+Current Price: ${stockData.price}
+Open: ${stockData.open ?? "N/A"}
+High: ${stockData.high ?? "N/A"}
+Low: ${stockData.low ?? "N/A"}
+Previous Close: ${stockData.prevClose ?? "N/A"}
+
+Return JSON in exactly this format:
+{
+  "signal": "BUY or SELL or HOLD",
+  "entry": "short numeric guidance",
+  "target": "short numeric guidance",
+  "stopLoss": "short numeric guidance",
+  "risk": "Low or Medium or High",
+  "reason": "1-2 short sentences",
+  "action": "1 short practical sentence"
+}
+
+Do not return markdown. Do not return anything except JSON.
+`;
+
+    const response = await ai.models.generateContent({
+      model: "gemini-2.0-flash",
+      contents: prompt,
+    });
+
+    const text = response.text?.trim();
+
+    if (!text) return fallbackAI(stockData);
+
+    const cleaned = text.replace(/```json|```/g, "").trim();
+    return JSON.parse(cleaned);
+  } catch (error) {
+    console.log("Gemini error:", error.message);
+    return fallbackAI(stockData);
+  }
+}
+
 app.get("/", (req, res) => {
   res.send("Backend running 🚀");
 });
@@ -70,6 +130,8 @@ app.get("/stock/:symbol", async (req, res) => {
       ? (change / Number(data.prevClose)) * 100
       : 0;
 
+    const aiAnalysis = await generateAIAnalysis(data);
+
     res.json({
       symbol: data.symbol,
       name: data.name,
@@ -82,6 +144,7 @@ app.get("/stock/:symbol", async (req, res) => {
       low: data.low != null ? Number(data.low).toFixed(2) : "N/A",
       previousClose:
         data.prevClose != null ? Number(data.prevClose).toFixed(2) : "N/A",
+      aiAnalysis,
     });
   } catch (err) {
     console.log("SERVER ERROR:", err.message);

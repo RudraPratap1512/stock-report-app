@@ -16,11 +16,10 @@ const ai = new GoogleGenAI({
 
 async function getStockData(symbol) {
   const raw = String(symbol || "").trim().toUpperCase();
-
   const candidates = [raw, `${raw}.NS`, `${raw}.BO`];
 
   for (const finalSymbol of candidates) {
-    const url = `https://query2.finance.yahoo.com/v8/finance/chart/${finalSymbol}?interval=1d`;
+    const url = `https://query2.finance.yahoo.com/v8/finance/chart/${finalSymbol}?range=1mo&interval=1d`;
 
     try {
       const response = await axios.get(url, {
@@ -32,19 +31,64 @@ async function getStockData(symbol) {
 
       const result = response.data?.chart?.result?.[0];
       const meta = result?.meta;
+      const timestamps = result?.timestamp || [];
+      const quote = result?.indicators?.quote?.[0] || {};
 
-      if (meta?.regularMarketPrice) {
-        return {
-          symbol: finalSymbol,
-          name: meta.longName || meta.shortName || finalSymbol,
-          exchange: meta.exchangeName || meta.fullExchangeName || "N/A",
-          price: meta.regularMarketPrice,
-          open: meta.regularMarketOpen,
-          high: meta.regularMarketDayHigh,
-          low: meta.regularMarketDayLow,
-          prevClose: meta.previousClose,
-        };
+      const opens = quote.open || [];
+      const highs = quote.high || [];
+      const lows = quote.low || [];
+      const closes = quote.close || [];
+
+      if (!meta?.regularMarketPrice) {
+        continue;
       }
+
+      const rows = timestamps.map((ts, i) => ({
+        date: new Date(ts * 1000).toISOString(),
+        open: opens[i] ?? null,
+        high: highs[i] ?? null,
+        low: lows[i] ?? null,
+        close: closes[i] ?? null,
+      }));
+
+      const validRows = rows.filter((r) => r.close != null);
+
+      const lastRow =
+        validRows.length > 0 ? validRows[validRows.length - 1] : null;
+      const prevRow =
+        validRows.length > 1 ? validRows[validRows.length - 2] : null;
+
+      const previousClose =
+        meta.previousClose ??
+        meta.chartPreviousClose ??
+        (prevRow ? Number(prevRow.close) : null);
+
+      return {
+        symbol: finalSymbol,
+        name: meta.longName || meta.shortName || finalSymbol,
+        exchange: meta.exchangeName || meta.fullExchangeName || "N/A",
+        price: Number(meta.regularMarketPrice),
+        open:
+          meta.regularMarketOpen != null
+            ? Number(meta.regularMarketOpen)
+            : lastRow?.open != null
+            ? Number(lastRow.open)
+            : null,
+        high:
+          meta.regularMarketDayHigh != null
+            ? Number(meta.regularMarketDayHigh)
+            : lastRow?.high != null
+            ? Number(lastRow.high)
+            : null,
+        low:
+          meta.regularMarketDayLow != null
+            ? Number(meta.regularMarketDayLow)
+            : lastRow?.low != null
+            ? Number(lastRow.low)
+            : null,
+        previousClose:
+          previousClose != null ? Number(previousClose) : null,
+      };
     } catch (err) {
       console.log(`API ERROR for ${finalSymbol}:`, err.message);
     }
@@ -53,20 +97,43 @@ async function getStockData(symbol) {
   return null;
 }
 
-function fallbackAI(data) {
+function fallbackAI(stockData, changePercent) {
+  let signal = "HOLD";
+  let risk = "Medium";
+  let reason = "Price is moving in a neutral range.";
+  let action = "Wait for better confirmation.";
+  let target = (Number(stockData.price) * 1.03).toFixed(2);
+  let stopLoss = (Number(stockData.price) * 0.98).toFixed(2);
+
+  if (changePercent > 1.5) {
+    signal = "BUY";
+    risk = "Medium";
+    reason = "Price momentum is positive and stock is showing strength.";
+    action = "Consider buying in small quantity with stop loss discipline.";
+  } else if (changePercent < -1.5) {
+    signal = "SELL";
+    risk = "Medium";
+    reason = "Price momentum is weak and downside pressure is visible.";
+    action = "Avoid fresh long entries or wait for stability.";
+  }
+
   return {
-    signal: "HOLD",
-    entry: `${data.price}`,
-    target: (Number(data.price) * 1.03).toFixed(2),
-    stopLoss: (Number(data.price) * 0.98).toFixed(2),
-    risk: "Medium",
-    reason: "AI service unavailable, using fallback logic based on current live price.",
-    action: "Wait for confirmation before taking a fresh position.",
+    signal,
+    entry: Number(stockData.price).toFixed(2),
+    target,
+    stopLoss,
+    risk,
+    reason,
+    action,
   };
 }
 
-async function generateAIAnalysis(stockData) {
+async function generateAIAnalysis(stockData, changePercent) {
   try {
+    if (!process.env.GEMINI_API_KEY) {
+      return fallbackAI(stockData, changePercent);
+    }
+
     const prompt = `
 You are a practical stock analysis assistant for educational use only.
 
@@ -79,14 +146,15 @@ Current Price: ${stockData.price}
 Open: ${stockData.open ?? "N/A"}
 High: ${stockData.high ?? "N/A"}
 Low: ${stockData.low ?? "N/A"}
-Previous Close: ${stockData.prevClose ?? "N/A"}
+Previous Close: ${stockData.previousClose ?? "N/A"}
+Change Percent: ${changePercent.toFixed(2)}%
 
 Return JSON in exactly this format:
 {
   "signal": "BUY or SELL or HOLD",
-  "entry": "short numeric guidance",
-  "target": "short numeric guidance",
-  "stopLoss": "short numeric guidance",
+  "entry": "numeric value or short range",
+  "target": "numeric value",
+  "stopLoss": "numeric value",
   "risk": "Low or Medium or High",
   "reason": "1-2 short sentences",
   "action": "1 short practical sentence"
@@ -102,13 +170,15 @@ Do not return markdown. Do not return anything except JSON.
 
     const text = response.text?.trim();
 
-    if (!text) return fallbackAI(stockData);
+    if (!text) {
+      return fallbackAI(stockData, changePercent);
+    }
 
     const cleaned = text.replace(/```json|```/g, "").trim();
     return JSON.parse(cleaned);
   } catch (error) {
     console.log("Gemini error:", error.message);
-    return fallbackAI(stockData);
+    return fallbackAI(stockData, changePercent);
   }
 }
 
@@ -118,32 +188,37 @@ app.get("/", (req, res) => {
 
 app.get("/stock/:symbol", async (req, res) => {
   try {
-    const symbol = req.params.symbol;
-    const data = await getStockData(symbol);
+    const stockData = await getStockData(req.params.symbol);
 
-    if (!data || !data.price) {
+    if (!stockData || !stockData.price) {
       return res.status(404).json({ error: "Stock not found" });
     }
 
-    const change = Number(data.price) - Number(data.prevClose || data.price);
-    const changePercent = data.prevClose
-      ? (change / Number(data.prevClose)) * 100
-      : 0;
+    const currentPrice = Number(stockData.price);
+    const prevClose =
+      stockData.previousClose != null
+        ? Number(stockData.previousClose)
+        : currentPrice;
 
-    const aiAnalysis = await generateAIAnalysis(data);
+    const change = currentPrice - prevClose;
+    const changePercent = prevClose ? (change / prevClose) * 100 : 0;
+
+    const aiAnalysis = await generateAIAnalysis(stockData, changePercent);
 
     res.json({
-      symbol: data.symbol,
-      name: data.name,
-      exchange: data.exchange,
-      price: Number(data.price).toFixed(2),
-      change: Number(change).toFixed(2),
-      changePercent: `${Number(changePercent).toFixed(2)}%`,
-      open: data.open != null ? Number(data.open).toFixed(2) : "N/A",
-      high: data.high != null ? Number(data.high).toFixed(2) : "N/A",
-      low: data.low != null ? Number(data.low).toFixed(2) : "N/A",
+      symbol: stockData.symbol,
+      name: stockData.name,
+      exchange: stockData.exchange,
+      price: currentPrice.toFixed(2),
+      change: change.toFixed(2),
+      changePercent: `${changePercent.toFixed(2)}%`,
+      open: stockData.open != null ? Number(stockData.open).toFixed(2) : "N/A",
+      high: stockData.high != null ? Number(stockData.high).toFixed(2) : "N/A",
+      low: stockData.low != null ? Number(stockData.low).toFixed(2) : "N/A",
       previousClose:
-        data.prevClose != null ? Number(data.prevClose).toFixed(2) : "N/A",
+        stockData.previousClose != null
+          ? Number(stockData.previousClose).toFixed(2)
+          : "N/A",
       aiAnalysis,
     });
   } catch (err) {

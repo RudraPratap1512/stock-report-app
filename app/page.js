@@ -169,6 +169,13 @@ export default function Home() {
   const changeNum = data ? Number(data.change) : 0;
   const isPositive = changeNum >= 0;
 
+  const signalColor =
+    data?.aiAnalysis?.signal === "BUY"
+      ? "#22c55e"
+      : data?.aiAnalysis?.signal === "SELL"
+      ? "#ef4444"
+      : "#facc15";
+
   return (
     <>
       {showDisclaimer && (
@@ -237,8 +244,7 @@ export default function Home() {
                 or guaranteed buy/sell recommendations.
               </p>
               <p>
-                Stock data shown here is for research and learning only. Always verify data
-                from your broker or exchange before making any decision.
+                Stock data and AI suggestions shown here are for research and learning only.
               </p>
               <p>
                 By continuing, you acknowledge that any trading or investing decision taken
@@ -503,9 +509,15 @@ export default function Home() {
                 </div>
 
                 <div style={panelStyle}>
-                  <div style={labelStyle}>QUICK VIEW</div>
-                  <h2 style={{ margin: "8px 0 14px 0", color: "#fff" }}>
-                    Stock Snapshot
+                  <div style={labelStyle}>AI SIGNAL</div>
+                  <h2
+                    style={{
+                      margin: "8px 0 14px 0",
+                      color: signalColor,
+                      fontSize: "30px",
+                    }}
+                  >
+                    {data.aiAnalysis?.signal || "N/A"}
                   </h2>
 
                   <div
@@ -515,15 +527,15 @@ export default function Home() {
                       gap: "12px",
                     }}
                   >
-                    <MiniBox title="Name" value={data.name} />
-                    <MiniBox title="Symbol" value={data.symbol} />
-                    <MiniBox title="Price" value={`₹${data.price}`} />
-                    <MiniBox title="Change %" value={data.changePercent} />
+                    <MiniBox title="Entry" value={`₹${data.aiAnalysis?.entry || "N/A"}`} />
+                    <MiniBox title="Target" value={`₹${data.aiAnalysis?.target || "N/A"}`} />
+                    <MiniBox title="Stop Loss" value={`₹${data.aiAnalysis?.stopLoss || "N/A"}`} />
+                    <MiniBox title="Risk" value={data.aiAnalysis?.risk || "N/A"} />
                   </div>
 
                   <div style={{ marginTop: "18px", color: "#cbd5e1", lineHeight: 1.7 }}>
-                    Current backend is returning live quote data successfully.
-                    Advanced AI/indicator modules can be added again after this stable live version.
+                    <p><strong>Reason:</strong> {data.aiAnalysis?.reason || "N/A"}</p>
+                    <p><strong>Action:</strong> {data.aiAnalysis?.action || "N/A"}</p>
                   </div>
                 </div>
 

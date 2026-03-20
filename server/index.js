@@ -19,29 +19,34 @@ async function getStockData(symbol) {
   const candidates = [raw, `${raw}.NS`, `${raw}.BO`];
 
   for (const finalSymbol of candidates) {
-    const url = `https://query2.finance.yahoo.com/v8/finance/chart/${finalSymbol}?range=1mo&interval=1d`;
-
     try {
-      const response = await axios.get(url, {
-        headers: {
-          "User-Agent": "Mozilla/5.0",
-        },
-        timeout: 15000,
-      });
+      const headers = {
+        "User-Agent": "Mozilla/5.0",
+      };
 
-      const result = response.data?.chart?.result?.[0];
-      const meta = result?.meta;
-      const timestamps = result?.timestamp || [];
-      const quote = result?.indicators?.quote?.[0] || {};
+      const chartUrl = `https://query2.finance.yahoo.com/v8/finance/chart/${finalSymbol}?range=1mo&interval=1d`;
+      const quoteUrl = `https://query1.finance.yahoo.com/v7/finance/quote?symbols=${finalSymbol}`;
+
+      const [chartRes, quoteRes] = await Promise.all([
+        axios.get(chartUrl, { headers, timeout: 15000 }),
+        axios.get(quoteUrl, { headers, timeout: 15000 }),
+      ]);
+
+      const chartResult = chartRes.data?.chart?.result?.[0];
+      const meta = chartResult?.meta;
+      const quoteInfo = quoteRes.data?.quoteResponse?.result?.[0];
+
+      if (!meta?.regularMarketPrice && !quoteInfo?.regularMarketPrice) {
+        continue;
+      }
+
+      const timestamps = chartResult?.timestamp || [];
+      const quote = chartResult?.indicators?.quote?.[0] || {};
 
       const opens = quote.open || [];
       const highs = quote.high || [];
       const lows = quote.low || [];
       const closes = quote.close || [];
-
-      if (!meta?.regularMarketPrice) {
-        continue;
-      }
 
       const rows = timestamps.map((ts, i) => ({
         date: new Date(ts * 1000).toISOString(),
@@ -52,40 +57,50 @@ async function getStockData(symbol) {
       }));
 
       const validRows = rows.filter((r) => r.close != null);
-
       const lastRow =
         validRows.length > 0 ? validRows[validRows.length - 1] : null;
       const prevRow =
         validRows.length > 1 ? validRows[validRows.length - 2] : null;
 
+      const price =
+        Number(quoteInfo?.regularMarketPrice ?? meta?.regularMarketPrice ?? 0) ||
+        null;
+
       const previousClose =
-        meta.previousClose ??
-        meta.chartPreviousClose ??
+        quoteInfo?.regularMarketPreviousClose ??
+        meta?.previousClose ??
+        meta?.chartPreviousClose ??
         (prevRow ? Number(prevRow.close) : null);
 
       return {
         symbol: finalSymbol,
-        name: meta.longName || meta.shortName || finalSymbol,
-        exchange: meta.exchangeName || meta.fullExchangeName || "N/A",
-        price: Number(meta.regularMarketPrice),
+        name:
+          quoteInfo?.longName ||
+          quoteInfo?.shortName ||
+          meta?.longName ||
+          meta?.shortName ||
+          finalSymbol,
+        exchange:
+          quoteInfo?.fullExchangeName ||
+          meta?.exchangeName ||
+          meta?.fullExchangeName ||
+          "N/A",
+        price,
         open:
-          meta.regularMarketOpen != null
-            ? Number(meta.regularMarketOpen)
-            : lastRow?.open != null
-            ? Number(lastRow.open)
-            : null,
+          quoteInfo?.regularMarketOpen ??
+          meta?.regularMarketOpen ??
+          lastRow?.open ??
+          null,
         high:
-          meta.regularMarketDayHigh != null
-            ? Number(meta.regularMarketDayHigh)
-            : lastRow?.high != null
-            ? Number(lastRow.high)
-            : null,
+          quoteInfo?.regularMarketDayHigh ??
+          meta?.regularMarketDayHigh ??
+          lastRow?.high ??
+          null,
         low:
-          meta.regularMarketDayLow != null
-            ? Number(meta.regularMarketDayLow)
-            : lastRow?.low != null
-            ? Number(lastRow.low)
-            : null,
+          quoteInfo?.regularMarketDayLow ??
+          meta?.regularMarketDayLow ??
+          lastRow?.low ??
+          null,
         previousClose:
           previousClose != null ? Number(previousClose) : null,
       };
@@ -107,12 +122,10 @@ function fallbackAI(stockData, changePercent) {
 
   if (changePercent > 1.5) {
     signal = "BUY";
-    risk = "Medium";
     reason = "Price momentum is positive and stock is showing strength.";
     action = "Consider buying in small quantity with stop loss discipline.";
   } else if (changePercent < -1.5) {
     signal = "SELL";
-    risk = "Medium";
     reason = "Price momentum is weak and downside pressure is visible.";
     action = "Avoid fresh long entries or wait for stability.";
   }

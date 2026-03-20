@@ -1,43 +1,8 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
-import {
-  Chart as ChartJS,
-  LinearScale,
-  CategoryScale,
-  Tooltip,
-  Legend,
-  Title,
-  TimeScale,
-  LineElement,
-  PointElement,
-} from "chart.js";
-import { Chart, Line } from "react-chartjs-2";
-import {
-  CandlestickController,
-  CandlestickElement,
-  OhlcController,
-  OhlcElement,
-} from "chartjs-chart-financial";
-import "chartjs-adapter-date-fns";
+import { useEffect, useState } from "react";
 
-ChartJS.register(
-  LinearScale,
-  CategoryScale,
-  Tooltip,
-  Legend,
-  Title,
-  TimeScale,
-  LineElement,
-  PointElement,
-  CandlestickController,
-  CandlestickElement,
-  OhlcController,
-  OhlcElement
-);
-
-const API_BASE_URL =
-  process.env.NEXT_PUBLIC_API_URL || "https://stock-report-app.onrender.com";
+const API_BASE_URL = "https://stock-report-app.onrender.com";
 
 export default function Home() {
   const [stock, setStock] = useState("");
@@ -111,6 +76,7 @@ export default function Home() {
 
       if (!res.ok || result.error) {
         setError(result.error || "Stock fetch failed");
+        setData(null);
         return;
       }
 
@@ -118,13 +84,29 @@ export default function Home() {
     } catch (err) {
       console.log("Error fetching data:", err);
       setError("Unable to fetch stock data. Please try again.");
+      setData(null);
     } finally {
       setLoading(false);
     }
   };
 
+  const clearSavedPortfolio = () => {
+    localStorage.removeItem("savedStock");
+    localStorage.removeItem("savedData");
+    localStorage.removeItem("savedBuyPrice");
+    localStorage.removeItem("savedQuantity");
+    localStorage.removeItem("savedPortfolio");
+
+    setStock("");
+    setData(null);
+    setBuyPrice("");
+    setQuantity("");
+    setPortfolio([]);
+    setError("");
+  };
+
   const addToPortfolio = () => {
-    if (!data || data.error || !buyPrice || !quantity) return;
+    if (!data || !buyPrice || !quantity) return;
 
     const newItem = {
       id: Date.now(),
@@ -144,36 +126,6 @@ export default function Home() {
     setPortfolio((prev) => prev.filter((item) => item.id !== id));
   };
 
-  const clearSavedPortfolio = () => {
-    localStorage.removeItem("savedStock");
-    localStorage.removeItem("savedData");
-    localStorage.removeItem("savedBuyPrice");
-    localStorage.removeItem("savedQuantity");
-    localStorage.removeItem("savedPortfolio");
-
-    setStock("");
-    setData(null);
-    setBuyPrice("");
-    setQuantity("");
-    setPortfolio([]);
-    setError("");
-  };
-
-  const totalInvested = portfolio.reduce(
-    (sum, item) => sum + item.buyPrice * item.quantity,
-    0
-  );
-
-  const totalCurrent = portfolio.reduce(
-    (sum, item) => sum + item.currentPrice * item.quantity,
-    0
-  );
-
-  const totalProfit = totalCurrent - totalInvested;
-  const totalReturn = totalInvested
-    ? ((totalProfit / totalInvested) * 100).toFixed(2)
-    : 0;
-
   const portfolioWithPL = portfolio.map((item) => {
     const invested = item.buyPrice * item.quantity;
     const current = item.currentPrice * item.quantity;
@@ -189,6 +141,21 @@ export default function Home() {
     };
   });
 
+  const totalInvested = portfolioWithPL.reduce(
+    (sum, item) => sum + item.invested,
+    0
+  );
+
+  const totalCurrent = portfolioWithPL.reduce(
+    (sum, item) => sum + item.current,
+    0
+  );
+
+  const totalProfit = totalCurrent - totalInvested;
+  const totalReturn = totalInvested
+    ? ((totalProfit / totalInvested) * 100).toFixed(2)
+    : "0.00";
+
   const bestStock =
     portfolioWithPL.length > 0
       ? [...portfolioWithPL].sort((a, b) => b.pl - a.pl)[0]
@@ -199,376 +166,8 @@ export default function Home() {
       ? [...portfolioWithPL].sort((a, b) => a.pl - b.pl)[0]
       : null;
 
-  const emaPeriod = 5;
-  const rsiPeriod = 14;
-
-  const emaValues = useMemo(() => {
-    if (!data?.history || data.history.length === 0) return [];
-
-    const closes = data.history.map((item) => Number(item.close));
-    const multiplier = 2 / (emaPeriod + 1);
-
-    const result = [];
-    let emaPrev = closes[0];
-
-    for (let i = 0; i < closes.length; i++) {
-      const close = closes[i];
-      if (i === 0) {
-        emaPrev = close;
-      } else {
-        emaPrev = (close - emaPrev) * multiplier + emaPrev;
-      }
-
-      result.push({
-        x: new Date(data.history[i].date).getTime(),
-        y: Number(emaPrev.toFixed(2)),
-      });
-    }
-
-    return result;
-  }, [data]);
-
-  const rsiValues = useMemo(() => {
-    if (!data?.history || data.history.length <= rsiPeriod) return [];
-
-    const closes = data.history.map((item) => Number(item.close));
-    const result = [];
-
-    let gains = 0;
-    let losses = 0;
-
-    for (let i = 1; i <= rsiPeriod; i++) {
-      const diff = closes[i] - closes[i - 1];
-      if (diff >= 0) gains += diff;
-      else losses += Math.abs(diff);
-    }
-
-    let avgGain = gains / rsiPeriod;
-    let avgLoss = losses / rsiPeriod;
-
-    let rs = avgLoss === 0 ? 100 : avgGain / avgLoss;
-    let rsi = 100 - 100 / (1 + rs);
-
-    result.push({
-      x: new Date(data.history[rsiPeriod].date).toLocaleDateString(),
-      y: Number(rsi.toFixed(2)),
-    });
-
-    for (let i = rsiPeriod + 1; i < closes.length; i++) {
-      const diff = closes[i] - closes[i - 1];
-      const gain = diff > 0 ? diff : 0;
-      const loss = diff < 0 ? Math.abs(diff) : 0;
-
-      avgGain = (avgGain * (rsiPeriod - 1) + gain) / rsiPeriod;
-      avgLoss = (avgLoss * (rsiPeriod - 1) + loss) / rsiPeriod;
-
-      rs = avgLoss === 0 ? 100 : avgGain / avgLoss;
-      rsi = 100 - 100 / (1 + rs);
-
-      result.push({
-        x: new Date(data.history[i].date).toLocaleDateString(),
-        y: Number(rsi.toFixed(2)),
-      });
-    }
-
-    return result;
-  }, [data]);
-
-  const parseAI = (text) => {
-    if (!text) {
-      return {
-        signal: "N/A",
-        entry: "N/A",
-        target: "N/A",
-        stopLoss: "N/A",
-        risk: "N/A",
-        reason: "N/A",
-        action: "N/A",
-      };
-    }
-
-    const getValue = (label) => {
-      const regex = new RegExp(`${label}:\\s*(.*)`, "i");
-      const match = text.match(regex);
-      return match ? match[1].trim() : "N/A";
-    };
-
-    return {
-      signal: getValue("Signal").toUpperCase(),
-      entry: getValue("Entry"),
-      target: getValue("Target"),
-      stopLoss: getValue("Stop Loss"),
-      risk: getValue("Risk"),
-      reason: getValue("Reason"),
-      action: getValue("Action"),
-    };
-  };
-
-  const ai = parseAI(data?.aiAnalysis);
-
-  const indicatorRecommendation = data?.indicator || {
-    signal: "N/A",
-    score: 0,
-    rsi: null,
-    ema: null,
-    latestClose: null,
-    reason: "No indicator data available.",
-    details: [],
-  };
-
-  const finalRecommendation = useMemo(() => {
-    const aiSignal = ai.signal || "N/A";
-    const indSignal = indicatorRecommendation.signal || "N/A";
-
-    let verdict = "WAIT";
-    let color = "#f59e0b";
-    let summary = "Not enough confirmation yet.";
-
-    if (aiSignal.includes("BUY") && indSignal === "BUY") {
-      verdict = "STRONG BUY";
-      color = "#22c55e";
-      summary = "AI and indicators are both bullish.";
-    } else if (aiSignal.includes("SELL") && indSignal === "SELL") {
-      verdict = "STRONG SELL";
-      color = "#ef4444";
-      summary = "AI and indicators are both bearish.";
-    } else if (aiSignal.includes("BUY") && indSignal === "HOLD") {
-      verdict = "BUY WITH CAUTION";
-      color = "#84cc16";
-      summary = "AI is bullish but indicators are not fully aligned.";
-    } else if (aiSignal.includes("SELL") && indSignal === "HOLD") {
-      verdict = "SELL WITH CAUTION";
-      color = "#f97316";
-      summary = "AI is bearish but indicators are not fully aligned.";
-    } else if (aiSignal.includes("HOLD") && indSignal === "BUY") {
-      verdict = "WATCH FOR BUY";
-      color = "#a3e635";
-      summary = "Indicators are improving but AI is still cautious.";
-    } else if (aiSignal.includes("HOLD") && indSignal === "SELL") {
-      verdict = "WATCH FOR SELL";
-      color = "#fb7185";
-      summary = "Indicators are weakening but AI is still cautious.";
-    } else if (
-      (aiSignal.includes("BUY") && indSignal === "SELL") ||
-      (aiSignal.includes("SELL") && indSignal === "BUY")
-    ) {
-      verdict = "CONFLICT / AVOID";
-      color = "#eab308";
-      summary = "AI and indicators disagree, so avoid fresh trade.";
-    } else if (aiSignal.includes("HOLD") && indSignal === "HOLD") {
-      verdict = "HOLD / WAIT";
-      color = "#f59e0b";
-      summary = "Both AI and indicators suggest patience.";
-    }
-
-    return { verdict, color, summary };
-  }, [ai.signal, indicatorRecommendation.signal]);
-
-  const signalColor =
-    ai.signal.includes("BUY")
-      ? "#22c55e"
-      : ai.signal.includes("SELL")
-      ? "#ef4444"
-      : "#f59e0b";
-
-  const candleData = {
-    datasets: [
-      {
-        type: "candlestick",
-        label: "Candlestick",
-        data:
-          data?.history?.map((item) => ({
-            x: new Date(item.date).getTime(),
-            o: Number(item.open),
-            h: Number(item.high),
-            l: Number(item.low),
-            c: Number(item.close),
-          })) || [],
-        borderColor: {
-          up: "#26a69a",
-          down: "#ef5350",
-          unchanged: "#999",
-        },
-        backgroundColor: {
-          up: "#26a69a",
-          down: "#ef5350",
-          unchanged: "#999",
-        },
-      },
-      {
-        type: "line",
-        label: `EMA ${emaPeriod}`,
-        data: emaValues,
-        borderColor: "#f59e0b",
-        backgroundColor: "#f59e0b",
-        borderWidth: 2,
-        pointRadius: 0,
-        tension: 0.2,
-      },
-    ],
-  };
-
-  const candleOptions = {
-    parsing: false,
-    responsive: true,
-    maintainAspectRatio: false,
-    plugins: {
-      legend: {
-        display: true,
-        labels: {
-          color: "#cbd5e1",
-          boxWidth: 14,
-        },
-      },
-      title: {
-        display: true,
-        text: "Candlestick Chart + EMA",
-        color: "#ffffff",
-        font: {
-          size: 18,
-        },
-      },
-      tooltip: {
-        backgroundColor: "#111827",
-        titleColor: "#fff",
-        bodyColor: "#fff",
-      },
-    },
-    scales: {
-      x: {
-        type: "time",
-        time: {
-          unit: "day",
-        },
-        ticks: {
-          color: "#94a3b8",
-          maxRotation: 0,
-        },
-        grid: {
-          color: "rgba(148,163,184,0.12)",
-        },
-      },
-      y: {
-        beginAtZero: false,
-        ticks: {
-          color: "#94a3b8",
-        },
-        grid: {
-          color: "rgba(148,163,184,0.12)",
-        },
-      },
-    },
-  };
-
-  const rsiChartData = {
-    labels: rsiValues.map((item) => item.x),
-    datasets: [
-      {
-        label: `RSI ${rsiPeriod}`,
-        data: rsiValues.map((item) => item.y),
-        borderColor: "#60a5fa",
-        backgroundColor: "#60a5fa",
-        borderWidth: 2,
-        pointRadius: 0,
-        tension: 0.2,
-      },
-      {
-        label: "Overbought (70)",
-        data: rsiValues.map(() => 70),
-        borderColor: "#ef4444",
-        borderDash: [6, 6],
-        pointRadius: 0,
-        borderWidth: 1.5,
-      },
-      {
-        label: "Oversold (30)",
-        data: rsiValues.map(() => 30),
-        borderColor: "#22c55e",
-        borderDash: [6, 6],
-        pointRadius: 0,
-        borderWidth: 1.5,
-      },
-    ],
-  };
-
-  const rsiOptions = {
-    responsive: true,
-    maintainAspectRatio: false,
-    plugins: {
-      legend: {
-        labels: {
-          color: "#cbd5e1",
-        },
-      },
-      title: {
-        display: true,
-        text: "RSI Indicator",
-        color: "#ffffff",
-        font: {
-          size: 18,
-        },
-      },
-    },
-    scales: {
-      x: {
-        type: "category",
-        ticks: {
-          color: "#94a3b8",
-          maxRotation: 0,
-        },
-        grid: {
-          color: "rgba(148,163,184,0.12)",
-        },
-      },
-      y: {
-        min: 0,
-        max: 100,
-        ticks: {
-          color: "#94a3b8",
-        },
-        grid: {
-          color: "rgba(148,163,184,0.12)",
-        },
-      },
-    },
-  };
-
-  const isPositive = data && parseFloat(data.change) >= 0;
-
-  const panel = {
-    background: "linear-gradient(180deg, #111827 0%, #0f172a 100%)",
-    border: "1px solid rgba(148,163,184,0.16)",
-    borderRadius: "22px",
-    padding: "20px",
-    boxShadow: "0 20px 40px rgba(0,0,0,0.28)",
-  };
-
-  const statCard = {
-    background: "linear-gradient(180deg, #111827 0%, #0b1220 100%)",
-    border: "1px solid rgba(148,163,184,0.14)",
-    borderRadius: "18px",
-    padding: "18px",
-    boxShadow: "0 16px 30px rgba(0,0,0,0.22)",
-  };
-
-  const labelStyle = {
-    color: "#94a3b8",
-    fontSize: "13px",
-    marginBottom: "8px",
-  };
-
-  const badgeStyle = (bg, color) => ({
-    display: "inline-flex",
-    alignItems: "center",
-    gap: "6px",
-    padding: "8px 12px",
-    borderRadius: "999px",
-    background: bg,
-    color,
-    fontSize: "12px",
-    fontWeight: "bold",
-    border: `1px solid ${color}33`,
-  });
+  const changeNum = data ? Number(data.change) : 0;
+  const isPositive = changeNum >= 0;
 
   return (
     <>
@@ -638,8 +237,8 @@ export default function Home() {
                 or guaranteed buy/sell recommendations.
               </p>
               <p>
-                Stock data, AI signals, indicators, and final verdicts should be treated as
-                research tools only. Always do your own analysis before investing.
+                Stock data shown here is for research and learning only. Always verify data
+                from your broker or exchange before making any decision.
               </p>
               <p>
                 By continuing, you acknowledge that any trading or investing decision taken
@@ -686,9 +285,12 @@ export default function Home() {
         <div style={{ maxWidth: "1320px", margin: "0 auto" }}>
           <div
             style={{
-              ...panel,
-              marginBottom: "22px",
+              background: "linear-gradient(180deg, #111827 0%, #0f172a 100%)",
+              border: "1px solid rgba(148,163,184,0.16)",
+              borderRadius: "22px",
               padding: "24px",
+              boxShadow: "0 20px 40px rgba(0,0,0,0.28)",
+              marginBottom: "22px",
             }}
           >
             <div
@@ -721,8 +323,8 @@ export default function Home() {
                   AI Stock Analyzer
                 </h1>
                 <p style={{ margin: 0, color: "#94a3b8", lineHeight: 1.6 }}>
-                  Advanced AI-powered stock analysis platform with real-time data,
-                  technical indicators, and portfolio tracking.
+                  Advanced AI-powered stock analysis platform with real-time data
+                  and portfolio tracking.
                 </p>
               </div>
 
@@ -828,60 +430,26 @@ export default function Home() {
                 marginBottom: "22px",
               }}
             >
-              <div style={statCard}>
-                <div style={labelStyle}>Total Invested</div>
-                <div style={{ fontSize: "28px", fontWeight: "bold" }}>
-                  ₹{totalInvested.toFixed(2)}
-                </div>
-              </div>
-
-              <div style={statCard}>
-                <div style={labelStyle}>Current Value</div>
-                <div style={{ fontSize: "28px", fontWeight: "bold" }}>
-                  ₹{totalCurrent.toFixed(2)}
-                </div>
-              </div>
-
-              <div style={statCard}>
-                <div style={labelStyle}>Total P&L</div>
-                <div
-                  style={{
-                    fontSize: "28px",
-                    fontWeight: "bold",
-                    color: totalProfit >= 0 ? "#22c55e" : "#ef4444",
-                  }}
-                >
-                  ₹{totalProfit.toFixed(2)}
-                </div>
-                <div
-                  style={{
-                    marginTop: "6px",
-                    color: totalProfit >= 0 ? "#22c55e" : "#ef4444",
-                  }}
-                >
-                  {totalReturn}%
-                </div>
-              </div>
-
-              <div style={statCard}>
-                <div style={labelStyle}>Best Performer</div>
-                <div style={{ fontSize: "22px", fontWeight: "bold" }}>
-                  {bestStock ? bestStock.symbol : "N/A"}
-                </div>
-                <div style={{ marginTop: "6px", color: "#22c55e" }}>
-                  {bestStock ? `₹${bestStock.pl.toFixed(2)}` : "-"}
-                </div>
-              </div>
-
-              <div style={statCard}>
-                <div style={labelStyle}>Worst Performer</div>
-                <div style={{ fontSize: "22px", fontWeight: "bold" }}>
-                  {worstStock ? worstStock.symbol : "N/A"}
-                </div>
-                <div style={{ marginTop: "6px", color: "#ef4444" }}>
-                  {worstStock ? `₹${worstStock.pl.toFixed(2)}` : "-"}
-                </div>
-              </div>
+              <StatCard title="Total Invested" value={`₹${totalInvested.toFixed(2)}`} />
+              <StatCard title="Current Value" value={`₹${totalCurrent.toFixed(2)}`} />
+              <StatCard
+                title="Total P&L"
+                value={`₹${totalProfit.toFixed(2)}`}
+                subValue={`${totalReturn}%`}
+                valueColor={totalProfit >= 0 ? "#22c55e" : "#ef4444"}
+              />
+              <StatCard
+                title="Best Performer"
+                value={bestStock ? bestStock.symbol : "N/A"}
+                subValue={bestStock ? `₹${bestStock.pl.toFixed(2)}` : "-"}
+                valueColor="#22c55e"
+              />
+              <StatCard
+                title="Worst Performer"
+                value={worstStock ? worstStock.symbol : "N/A"}
+                subValue={worstStock ? `₹${worstStock.pl.toFixed(2)}` : "-"}
+                valueColor="#ef4444"
+              />
             </div>
           )}
 
@@ -895,10 +463,8 @@ export default function Home() {
                   marginBottom: "22px",
                 }}
               >
-                <div style={panel}>
-                  <div style={{ color: "#94a3b8", fontSize: "13px" }}>
-                    LIVE QUOTE
-                  </div>
+                <div style={panelStyle}>
+                  <div style={labelStyle}>LIVE QUOTE</div>
                   <h2 style={{ margin: "8px 0 14px 0", color: "#fff" }}>
                     {data.name}
                   </h2>
@@ -927,6 +493,8 @@ export default function Home() {
                   </div>
 
                   <div style={{ marginTop: "16px", lineHeight: 1.8 }}>
+                    <p><strong>Symbol:</strong> {data.symbol}</p>
+                    <p><strong>Exchange:</strong> {data.exchange}</p>
                     <p><strong>Open:</strong> ₹{data.open}</p>
                     <p><strong>High:</strong> ₹{data.high}</p>
                     <p><strong>Low:</strong> ₹{data.low}</p>
@@ -934,378 +502,76 @@ export default function Home() {
                   </div>
                 </div>
 
-                <div style={panel}>
-                  <div style={{ color: "#94a3b8", fontSize: "13px" }}>
-                    SMART AI SIGNAL
-                  </div>
-                  <div
-                    style={{
-                      marginTop: "10px",
-                      marginBottom: "14px",
-                      display: "flex",
-                      alignItems: "center",
-                      gap: "10px",
-                      flexWrap: "wrap",
-                    }}
-                  >
-                    <div
-                      style={{
-                        fontSize: "24px",
-                        fontWeight: "bold",
-                        color: signalColor,
-                      }}
-                    >
-                      {ai.signal}
-                    </div>
-                    <div
-                      style={
-                        ai.signal.includes("BUY")
-                          ? badgeStyle("rgba(34,197,94,0.12)", "#22c55e")
-                          : ai.signal.includes("SELL")
-                          ? badgeStyle("rgba(239,68,68,0.12)", "#ef4444")
-                          : badgeStyle("rgba(245,158,11,0.12)", "#f59e0b")
-                      }
-                    >
-                      AI View
-                    </div>
-                  </div>
+                <div style={panelStyle}>
+                  <div style={labelStyle}>QUICK VIEW</div>
+                  <h2 style={{ margin: "8px 0 14px 0", color: "#fff" }}>
+                    Stock Snapshot
+                  </h2>
 
                   <div
                     style={{
                       display: "grid",
                       gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
                       gap: "12px",
-                      marginBottom: "14px",
                     }}
                   >
-                    <div>
-                      <div style={labelStyle}>Entry</div>
-                      <div>{ai.entry}</div>
-                    </div>
-                    <div>
-                      <div style={labelStyle}>Target</div>
-                      <div>{ai.target}</div>
-                    </div>
-                    <div>
-                      <div style={labelStyle}>Stop Loss</div>
-                      <div>{ai.stopLoss}</div>
-                    </div>
-                    <div>
-                      <div style={labelStyle}>Risk</div>
-                      <div>{ai.risk}</div>
-                    </div>
+                    <MiniBox title="Name" value={data.name} />
+                    <MiniBox title="Symbol" value={data.symbol} />
+                    <MiniBox title="Price" value={`₹${data.price}`} />
+                    <MiniBox title="Change %" value={data.changePercent} />
                   </div>
 
-                  <div style={{ marginBottom: "10px" }}>
-                    <div style={labelStyle}>Reason</div>
-                    <div style={{ color: "#e5e7eb", lineHeight: 1.55 }}>
-                      {ai.reason}
-                    </div>
-                  </div>
-
-                  <div>
-                    <div style={labelStyle}>Action</div>
-                    <div style={{ color: "#e5e7eb", lineHeight: 1.55 }}>
-                      {ai.action}
-                    </div>
+                  <div style={{ marginTop: "18px", color: "#cbd5e1", lineHeight: 1.7 }}>
+                    Current backend is returning live quote data successfully.
+                    Advanced AI/indicator modules can be added again after this stable live version.
                   </div>
                 </div>
 
-                <div style={panel}>
-                  <div style={{ color: "#94a3b8", fontSize: "13px" }}>
-                    INDICATOR RECOMMENDATION
-                  </div>
-                  <div
-                    style={{
-                      marginTop: "10px",
-                      marginBottom: "14px",
-                      display: "flex",
-                      alignItems: "center",
-                      gap: "10px",
-                      flexWrap: "wrap",
-                    }}
-                  >
-                    <div
+                <div style={panelStyle}>
+                  <div style={labelStyle}>PORTFOLIO ENTRY</div>
+                  <h2 style={{ margin: "8px 0 14px 0", color: "#fff" }}>
+                    Add This Stock
+                  </h2>
+
+                  <div style={{ display: "grid", gap: "12px" }}>
+                    <input
+                      type="number"
+                      placeholder="Buy Price"
+                      value={buyPrice}
+                      onChange={(e) => setBuyPrice(e.target.value)}
+                      style={inputStyle}
+                    />
+                    <input
+                      type="number"
+                      placeholder="Quantity"
+                      value={quantity}
+                      onChange={(e) => setQuantity(e.target.value)}
+                      style={inputStyle}
+                    />
+                    <button
+                      onClick={addToPortfolio}
                       style={{
-                        fontSize: "24px",
+                        padding: "12px 16px",
+                        borderRadius: "10px",
+                        border: "none",
+                        background:
+                          "linear-gradient(135deg, #16a34a 0%, #15803d 100%)",
+                        color: "#fff",
+                        cursor: "pointer",
                         fontWeight: "bold",
-                        color:
-                          indicatorRecommendation.signal === "BUY"
-                            ? "#22c55e"
-                            : indicatorRecommendation.signal === "SELL"
-                            ? "#ef4444"
-                            : "#f59e0b",
                       }}
                     >
-                      {indicatorRecommendation.signal}
-                    </div>
-                    <div
-                      style={
-                        indicatorRecommendation.signal === "BUY"
-                          ? badgeStyle("rgba(34,197,94,0.12)", "#22c55e")
-                          : indicatorRecommendation.signal === "SELL"
-                          ? badgeStyle("rgba(239,68,68,0.12)", "#ef4444")
-                          : badgeStyle("rgba(245,158,11,0.12)", "#f59e0b")
-                      }
-                    >
-                      Indicator View
-                    </div>
-                  </div>
-
-                  <div
-                    style={{
-                      display: "grid",
-                      gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
-                      gap: "12px",
-                      marginBottom: "14px",
-                    }}
-                  >
-                    <div>
-                      <div style={labelStyle}>Score</div>
-                      <div>{indicatorRecommendation.score}</div>
-                    </div>
-                    <div>
-                      <div style={labelStyle}>RSI</div>
-                      <div>{indicatorRecommendation.rsi ?? "N/A"}</div>
-                    </div>
-                    <div>
-                      <div style={labelStyle}>EMA</div>
-                      <div>{indicatorRecommendation.ema ?? "N/A"}</div>
-                    </div>
-                    <div>
-                      <div style={labelStyle}>Latest Close</div>
-                      <div>{indicatorRecommendation.latestClose ?? "N/A"}</div>
-                    </div>
-                  </div>
-
-                  <div>
-                    <div style={labelStyle}>Reason</div>
-                    <div style={{ color: "#e5e7eb", lineHeight: 1.55 }}>
-                      {indicatorRecommendation.reason}
-                    </div>
-                  </div>
-                </div>
-
-                <div
-                  style={{
-                    ...panel,
-                    border: `1px solid ${finalRecommendation.color}55`,
-                    boxShadow: `0 20px 40px ${finalRecommendation.color}22`,
-                    position: "relative",
-                    overflow: "hidden",
-                  }}
-                >
-                  <div
-                    style={{
-                      position: "absolute",
-                      inset: 0,
-                      background: `linear-gradient(135deg, ${finalRecommendation.color}12, transparent 45%)`,
-                      pointerEvents: "none",
-                    }}
-                  />
-                  <div style={{ position: "relative" }}>
-                    <div style={{ color: "#94a3b8", fontSize: "13px" }}>
-                      FINAL VERDICT
-                    </div>
-
-                    <div
-                      style={{
-                        marginTop: "10px",
-                        marginBottom: "14px",
-                        fontSize: "28px",
-                        fontWeight: "bold",
-                        color: finalRecommendation.color,
-                      }}
-                    >
-                      {finalRecommendation.verdict}
-                    </div>
-
-                    <div
-                      style={{
-                        ...badgeStyle(
-                          `${finalRecommendation.color}22`,
-                          finalRecommendation.color
-                        ),
-                        marginBottom: "14px",
-                      }}
-                    >
-                      Combined Engine
-                    </div>
-
-                    <div style={{ marginBottom: "10px" }}>
-                      <div style={labelStyle}>Summary</div>
-                      <div style={{ color: "#e5e7eb", lineHeight: 1.6 }}>
-                        {finalRecommendation.summary}
-                      </div>
-                    </div>
-
-                    <div
-                      style={{
-                        display: "grid",
-                        gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
-                        gap: "12px",
-                        marginTop: "14px",
-                      }}
-                    >
-                      <div
-                        style={{
-                          backgroundColor: "rgba(15,23,42,0.7)",
-                          border: "1px solid rgba(148,163,184,0.12)",
-                          borderRadius: "14px",
-                          padding: "12px",
-                        }}
-                      >
-                        <div style={labelStyle}>AI Signal</div>
-                        <div style={{ fontWeight: "bold" }}>{ai.signal}</div>
-                      </div>
-
-                      <div
-                        style={{
-                          backgroundColor: "rgba(15,23,42,0.7)",
-                          border: "1px solid rgba(148,163,184,0.12)",
-                          borderRadius: "14px",
-                          padding: "12px",
-                        }}
-                      >
-                        <div style={labelStyle}>Indicator Signal</div>
-                        <div style={{ fontWeight: "bold" }}>
-                          {indicatorRecommendation.signal}
-                        </div>
-                      </div>
-                    </div>
+                      Add to Portfolio
+                    </button>
                   </div>
                 </div>
               </div>
 
-              <div style={{ ...panel, marginBottom: "22px" }}>
-                <div
-                  style={{
-                    display: "flex",
-                    justifyContent: "space-between",
-                    gap: "12px",
-                    alignItems: "center",
-                    flexWrap: "wrap",
-                    marginBottom: "16px",
-                  }}
-                >
-                  <div>
-                    <div style={labelStyle}>PORTFOLIO MANAGER</div>
-                    <h2 style={{ margin: 0 }}>Multi Stock Portfolio</h2>
-                  </div>
-                </div>
+              {portfolio.length > 0 && (
+                <div style={{ ...panelStyle, marginBottom: "22px" }}>
+                  <div style={labelStyle}>PORTFOLIO MANAGER</div>
+                  <h2 style={{ marginTop: 0 }}>Your Holdings</h2>
 
-                <div
-                  style={{
-                    display: "flex",
-                    gap: "10px",
-                    flexWrap: "wrap",
-                    marginBottom: "16px",
-                  }}
-                >
-                  <input
-                    type="number"
-                    placeholder="Buy Price"
-                    value={buyPrice}
-                    onChange={(e) => setBuyPrice(e.target.value)}
-                    style={{
-                      padding: "11px 12px",
-                      borderRadius: "10px",
-                      border: "1px solid #334155",
-                      backgroundColor: "#0f172a",
-                      color: "#fff",
-                      flex: "1 1 180px",
-                    }}
-                  />
-
-                  <input
-                    type="number"
-                    placeholder="Quantity"
-                    value={quantity}
-                    onChange={(e) => setQuantity(e.target.value)}
-                    style={{
-                      padding: "11px 12px",
-                      borderRadius: "10px",
-                      border: "1px solid #334155",
-                      backgroundColor: "#0f172a",
-                      color: "#fff",
-                      flex: "1 1 180px",
-                    }}
-                  />
-
-                  <button
-                    onClick={addToPortfolio}
-                    style={{
-                      padding: "11px 16px",
-                      borderRadius: "10px",
-                      border: "none",
-                      background:
-                        "linear-gradient(135deg, #16a34a 0%, #15803d 100%)",
-                      color: "#fff",
-                      cursor: "pointer",
-                      fontWeight: "bold",
-                    }}
-                  >
-                    Add Stock
-                  </button>
-                </div>
-
-                <div
-                  style={{
-                    display: "grid",
-                    gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
-                    gap: "12px",
-                    marginBottom: "18px",
-                  }}
-                >
-                  <div
-                    style={{
-                      backgroundColor: "#0b1220",
-                      border: "1px solid rgba(148,163,184,0.12)",
-                      borderRadius: "14px",
-                      padding: "14px",
-                    }}
-                  >
-                    <div style={labelStyle}>Total Invested</div>
-                    <div style={{ fontWeight: "bold" }}>
-                      ₹{totalInvested.toFixed(2)}
-                    </div>
-                  </div>
-
-                  <div
-                    style={{
-                      backgroundColor: "#0b1220",
-                      border: "1px solid rgba(148,163,184,0.12)",
-                      borderRadius: "14px",
-                      padding: "14px",
-                    }}
-                  >
-                    <div style={labelStyle}>Current Value</div>
-                    <div style={{ fontWeight: "bold" }}>
-                      ₹{totalCurrent.toFixed(2)}
-                    </div>
-                  </div>
-
-                  <div
-                    style={{
-                      backgroundColor: "#0b1220",
-                      border: "1px solid rgba(148,163,184,0.12)",
-                      borderRadius: "14px",
-                      padding: "14px",
-                    }}
-                  >
-                    <div style={labelStyle}>Portfolio Return</div>
-                    <div
-                      style={{
-                        fontWeight: "bold",
-                        color: totalProfit >= 0 ? "#22c55e" : "#ef4444",
-                      }}
-                    >
-                      {totalReturn}%
-                    </div>
-                  </div>
-                </div>
-
-                {portfolio.length > 0 && (
                   <div
                     style={{
                       overflowX: "auto",
@@ -1388,36 +654,7 @@ export default function Home() {
                       </tbody>
                     </table>
                   </div>
-                )}
-              </div>
-
-              {data?.history && data.history.length > 0 && (
-                <>
-                  <div
-                    style={{
-                      ...panel,
-                      marginBottom: "22px",
-                      height: "min(520px, 70vh)",
-                    }}
-                  >
-                    <Chart
-                      type="candlestick"
-                      data={candleData}
-                      options={candleOptions}
-                    />
-                  </div>
-
-                  {rsiValues.length > 0 && (
-                    <div
-                      style={{
-                        ...panel,
-                        height: "min(360px, 50vh)",
-                      }}
-                    >
-                      <Line data={rsiChartData} options={rsiOptions} />
-                    </div>
-                  )}
-                </>
+                </div>
               )}
             </>
           )}
@@ -1426,6 +663,84 @@ export default function Home() {
     </>
   );
 }
+
+function StatCard({ title, value, subValue, valueColor = "#ffffff" }) {
+  return (
+    <div
+      style={{
+        background: "linear-gradient(180deg, #111827 0%, #0b1220 100%)",
+        border: "1px solid rgba(148,163,184,0.14)",
+        borderRadius: "18px",
+        padding: "18px",
+        boxShadow: "0 16px 30px rgba(0,0,0,0.22)",
+      }}
+    >
+      <div style={{ color: "#94a3b8", fontSize: "13px", marginBottom: "8px" }}>
+        {title}
+      </div>
+      <div style={{ fontSize: "28px", fontWeight: "bold", color: valueColor }}>
+        {value}
+      </div>
+      {subValue && (
+        <div style={{ marginTop: "6px", color: valueColor }}>{subValue}</div>
+      )}
+    </div>
+  );
+}
+
+function MiniBox({ title, value }) {
+  return (
+    <div
+      style={{
+        backgroundColor: "rgba(15,23,42,0.7)",
+        border: "1px solid rgba(148,163,184,0.12)",
+        borderRadius: "14px",
+        padding: "12px",
+      }}
+    >
+      <div style={{ color: "#94a3b8", fontSize: "13px", marginBottom: "6px" }}>
+        {title}
+      </div>
+      <div style={{ fontWeight: "bold", color: "#fff" }}>{value}</div>
+    </div>
+  );
+}
+
+const panelStyle = {
+  background: "linear-gradient(180deg, #111827 0%, #0f172a 100%)",
+  border: "1px solid rgba(148,163,184,0.16)",
+  borderRadius: "22px",
+  padding: "20px",
+  boxShadow: "0 20px 40px rgba(0,0,0,0.28)",
+};
+
+const labelStyle = {
+  color: "#94a3b8",
+  fontSize: "13px",
+  marginBottom: "8px",
+};
+
+const inputStyle = {
+  padding: "11px 12px",
+  borderRadius: "10px",
+  border: "1px solid #334155",
+  backgroundColor: "#0f172a",
+  color: "#fff",
+  outline: "none",
+};
+
+const badgeStyle = (bg, color) => ({
+  display: "inline-flex",
+  alignItems: "center",
+  gap: "6px",
+  padding: "8px 12px",
+  borderRadius: "999px",
+  background: bg,
+  color,
+  fontSize: "12px",
+  fontWeight: "bold",
+  border: `1px solid ${color}33`,
+});
 
 const thStyle = {
   padding: "14px 12px",

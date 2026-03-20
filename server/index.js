@@ -163,6 +163,43 @@ Reason: ${reason}
 Action: ${action}`;
 }
 
+async function resolveSymbol(input) {
+  const raw = String(input || "").trim().toUpperCase();
+
+  const candidates = [
+    raw,
+    `${raw}.NS`,
+    `${raw}.BO`,
+  ];
+
+  for (const symbol of candidates) {
+    try {
+      const quote = await yahooFinance.quote(symbol);
+      if (quote && quote.regularMarketPrice) {
+        return symbol;
+      }
+    } catch (e) {}
+  }
+
+  try {
+    const searchResult = await yahooFinance.search(raw);
+    const quotes = searchResult?.quotes || [];
+
+    const preferred =
+      quotes.find((q) => q.symbol === `${raw}.NS`) ||
+      quotes.find((q) => q.symbol === `${raw}.BO`) ||
+      quotes.find((q) => q.symbol?.includes(".NS")) ||
+      quotes.find((q) => q.symbol?.includes(".BO")) ||
+      quotes[0];
+
+    if (preferred?.symbol) {
+      return preferred.symbol;
+    }
+  } catch (e) {}
+
+  return null;
+}
+
 app.get("/", (req, res) => {
   res.send("Backend running with Yahoo Finance + Gemini 🚀");
 });
@@ -171,14 +208,12 @@ app.get("/stock/:symbol", async (req, res) => {
   const input = req.params.symbol.trim();
 
   try {
-    const searchResult = await yahooFinance.search(input);
-    const firstMatch = searchResult.quotes?.[0];
+    const symbol = await resolveSymbol(input);
 
-    if (!firstMatch || !firstMatch.symbol) {
+    if (!symbol) {
       return res.status(404).json({ error: "Stock not found" });
     }
 
-    const symbol = firstMatch.symbol;
     const quote = await yahooFinance.quote(symbol);
 
     if (!quote || !quote.regularMarketPrice) {
@@ -214,27 +249,11 @@ app.get("/stock/:symbol", async (req, res) => {
           low: Number(q.low),
           close: Number(q.close),
         }));
-
-      if (history.length < 20) {
-        const base = price;
-        history = Array.from({ length: 30 }).map((_, i) => {
-          const open = base + (Math.random() - 0.5) * 40;
-          const close = open + (Math.random() - 0.5) * 30;
-          const high = Math.max(open, close) + Math.random() * 15;
-          const low = Math.min(open, close) - Math.random() * 15;
-
-          return {
-            date: new Date(Date.now() - (29 - i) * 86400000),
-            open: Number(open.toFixed(2)),
-            high: Number(high.toFixed(2)),
-            low: Number(low.toFixed(2)),
-            close: Number(close.toFixed(2)),
-          };
-        });
-      }
     } catch (historyError) {
       console.log("History error:", historyError.message);
+    }
 
+    if (history.length < 20) {
       const base = price;
       history = Array.from({ length: 30 }).map((_, i) => {
         const open = base + (Math.random() - 0.5) * 40;
@@ -253,7 +272,6 @@ app.get("/stock/:symbol", async (req, res) => {
     }
 
     const indicator = calculateScore(history);
-
     let aiAnalysis = fallbackAI(indicator, price.toFixed(2));
 
     try {
